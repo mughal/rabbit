@@ -95,20 +95,34 @@ Use a simple, consistent pattern to describe events:
 
 We create a dedicated **vhost** (`events`) to isolate our messaging setup, add an **app user** (`uploader`) with permissions only in that vhost, and declare a **topic exchange** (`events`) that routes events by routing key (e.g., `auth.user.created`, `storage.image.deleted`). We then create a **durable queue** (`events.metrics`) and **bind** it to the exchange with the pattern `#`, which means the dashboard consumer receives **all events**. This gives us a simple, reliable path: **Producers → `events` exchange → `events.metrics` queue → Dashboard → WebSockets → Browser**.
 
+## Declare RabbitMQ Topology (vhost, exchange, queue, binding)
+
+We keep everything isolated in a vhost called `events`, and declare a **topic** exchange plus one queue for the dashboard.
+
+> Run these **inside the RabbitMQ container** (or replace `localhost:15672` with your host/IP).  
+> Ensure the `events` vhost exists and the user has permissions (`rabbitmqctl add_vhost events` and `rabbitmqctl set_permissions -p events <user> ".*" ".*" ".*"`).
+
+
+
 ```bash
 podman exec rabbitmq rabbitmqctl add_vhost events
 podman exec rabbitmq rabbitmqctl add_user uploader 'Str0ngPass!'
 podman exec rabbitmq rabbitmqctl set_permissions -p events uploader ".*" ".*" ".*"
 
-podman exec rabbitmq rabbitmqadmin -u admin -p S3cret! -V events \
+podman exec rabbitmq rabbitmqadmin -H localhost -P 15672 -V events -u admin -p 'S3cret!' \
   declare exchange name=events type=topic durable=true
-
-podman exec rabbitmq rabbitmqadmin -u admin -p S3cret! -V events \
+podman exec rabbitmq rabbitmqadmin -H localhost -P 15672 -V events -u admin -p 'S3cret!' \
   declare queue name=events.metrics durable=true
 
-podman exec rabbitmq rabbitmqadmin -u admin -p S3cret! -V events \
+podman exec rabbitmq rabbitmqadmin -H localhost -P 15672 -V events -u admin -p 'S3cret!' \
+  declare queue name=events.metrics durable=true
+
+podman exec rabbitmq rabbitmqadmin -H localhost -P 15672 -V events -u admin -p 'S3cret!' \
   declare binding source=events destination=events.metrics routing_key="#"
+
 ```
+
+
 
 
 * `rabbitmqctl add_vhost events`
@@ -132,6 +146,33 @@ podman exec rabbitmq rabbitmqadmin -u admin -p S3cret! -V events \
 
 ---
 
+## RabbitMQ Smoke Test (exchange → queue)
+
+Run these **inside the RabbitMQ container**. Replace creds/host if needed.
+
+```bash
+# 1) Publish a test message to the topic exchange `events`
+rabbitmqadmin -H localhost -P 15672 -V events -u admin -p 'S3cret!' \
+  publish exchange=events routing_key=auth.user.created \
+  payload='{"hello":"world"}' properties='{"content_type":"application/json"}'
+
+# 2) Check queue depth for `events.metrics`
+rabbitmqadmin -H localhost -P 15672 -V events -u admin -p 'S3cret!' \
+  list queues name messages
+
+# 3) Fetch messages (REMOVE them from the queue)
+rabbitmqadmin -H localhost -P 15672 -V events -u admin -p 'S3cret!' \
+  get queue=events.metrics ackmode=ack_requeue_false count=10
+
+# 4) Fetch messages (REQUEUE = peek without removing)
+rabbitmqadmin -H localhost -P 15672 -V events -u admin -p 'S3cret!' \
+  get queue=events.metrics ackmode=ack_requeue_true count=10
+
+# 5) Re-check queue depth (optional)
+rabbitmqadmin -H localhost -P 15672 -V events -u admin -p 'S3cret!' \
+  list queues name messages
+
+---
 ## Glossary (quick)
 
 * **Vhost:** a namespace/isolation boundary in RabbitMQ; exchanges/queues live inside it.
