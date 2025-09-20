@@ -89,6 +89,49 @@ Use a simple, consistent pattern to describe events:
 
 ---
 
+---
+
+## Dive in Rabbitmq
+
+We create a dedicated **vhost** (`events`) to isolate our messaging setup, add an **app user** (`uploader`) with permissions only in that vhost, and declare a **topic exchange** (`events`) that routes events by routing key (e.g., `auth.user.created`, `storage.image.deleted`). We then create a **durable queue** (`events.metrics`) and **bind** it to the exchange with the pattern `#`, which means the dashboard consumer receives **all events**. This gives us a simple, reliable path: **Producers → `events` exchange → `events.metrics` queue → Dashboard → WebSockets → Browser**.
+
+```bash
+podman exec rabbitmq rabbitmqctl add_vhost events
+podman exec rabbitmq rabbitmqctl add_user uploader 'Str0ngPass!'
+podman exec rabbitmq rabbitmqctl set_permissions -p events uploader ".*" ".*" ".*"
+
+podman exec rabbitmq rabbitmqadmin -u admin -p S3cret! -V events \
+  declare exchange name=events type=topic durable=true
+
+podman exec rabbitmq rabbitmqadmin -u admin -p S3cret! -V events \
+  declare queue name=events.metrics durable=true
+
+podman exec rabbitmq rabbitmqadmin -u admin -p S3cret! -V events \
+  declare binding source=events destination=events.metrics routing_key="#"
+```
+
+
+* `rabbitmqctl add_vhost events`
+  Creates a **vhost** named `events` — a namespace to keep exchanges/queues isolated.
+
+* `rabbitmqctl add_user uploader 'Str0ngPass!'`
+  Creates an **app user** `uploader` with the given password.
+
+* `rabbitmqctl set_permissions -p events uploader ".*" ".*" ".*"`
+  Grants `uploader` full rights **within the `events` vhost**:
+  `configure` / `write` / `read` (the three regexes).
+
+* `rabbitmqadmin -u admin -p S3cret! -V events declare exchange name=events type=topic durable=true`
+  Declares a **topic exchange** called `events` in the `events` vhost; **durable** so it survives restarts.
+
+* `rabbitmqadmin -u admin -p S3cret! -V events declare queue name=events.metrics durable=true`
+  Creates a **durable queue** `events.metrics` to hold messages for the dashboard consumer.
+
+* `rabbitmqadmin -u admin -p S3cret! -V events declare binding source=events destination=events.metrics routing_key="#"`
+  **Binds** the queue to the exchange with pattern `#` (match **all** routing keys), so every event published to `events` gets routed into `events.metrics`.
+
+---
+
 ## Glossary (quick)
 
 * **Vhost:** a namespace/isolation boundary in RabbitMQ; exchanges/queues live inside it.
