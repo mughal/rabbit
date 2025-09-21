@@ -333,6 +333,160 @@ node publish.mjs
 > With this library in place, any service can publish one line per event, and your dashboard (consumer) will have a consistent, real-time stream to drive live charts and counters.
 
 ---
+## Live Dashboard (Next.js) — Plan & Structure
+
+This repo hosts multiple components side-by-side so shared libs remain reusable:
+
+
+### Message Topology (v1)
+- **Exchange**: `events` (topic, durable)
+- **Queue**: `events.metrics` bound with `#` (all events)
+- Producers publish with routing keys like `auth.user.created`, `orders.paid`, etc.
+
+### Event Contract (minimum)
+- **routing key**: `domain.action.variant`
+- **payload**: JSON (object)
+- Optional headers: `x-service`, `x-env`, `x-version`
+
+The dashboard displays:
+- connection status, total events received
+- rolling list of recent events (latest 200)
+- top routing keys (counts)
+
+### Runtime Choice
+We will embed a RabbitMQ consumer and a WebSocket server inside the Next.js app (Node runtime) for v1. This avoids running another process. A future version may extract the consumer into a separate worker and use Redis Pub/Sub to fan-out to the Next.js server.
+
+### Environment (to be placed in `dashboard/.env.local`)
+AMQP_URL=amqp://user:pass@localhost:5672/events
+AMQP_EXCHANGE=events
+AMQP_QUEUE=events.metrics
+AMQP_PREFETCH=50
+ROUTING_FILTER=#
+
+### Milestones
+1. **M1 — Live feed:** consumer + WebSocket broadcast + minimal UI (status, counter, rolling list).
+2. **M2 — Filters & charts:** filter by routing key prefix, 60s throughput chart (in-memory).
+3. **M3 — Productionization:** socket auth, persistence (Redis/Postgres), health checks, graceful shutdown.
+
+### Local Dev Flow
+1. Start RabbitMQ (see `rabbitmq/`).
+2. Start the dashboard (Next.js dev server).
+3. Use `playground/` to publish test events.
+4. Verify live updates appear in the browser without refresh.
+
+### Operational Notes
+- v1 keeps only in-memory state (stats reset on restart).
+- We acknowledge messages on receipt; the dashboard is observational, not a system of record.
+- For durable analytics, wire persistence in M3 and render charts from stored series.
+
+---
+## Designing the Dashboard (Next.js + RabbitMQ + Socket.IO)
+
+### Purpose
+Provide a **live, read-only** view of events flowing through RabbitMQ for engineers and ops:
+- See events in real time (no refresh)
+- Triage spikes and anomalies quickly
+- Filter by routing key/service/env to narrow scope
+- Track lightweight metrics (throughput, top keys)
+
+### Primary Users & Jobs-to-be-Done
+- **Developer**: “Did my feature emit the correct events after deployment?”
+- **SRE/DevOps**: “Why did error events spike at 14:03?”
+- **QA**: “While I run a test, do I see the expected routing keys?”
+
+### Views (MVP → later)
+1. **Live Feed (M1)**  
+   - Connection status (broker + socket)  
+   - Total events count (session)  
+   - Rolling list (latest 200) with: time, routing key, JSON preview  
+   - Top routing keys (counts)  
+
+2. **Filters (M2)**  
+   - By routing key prefix (e.g., `auth.#`, `orders.#`)  
+   - By `env` (if header present), by `service`  
+
+3. **Metrics (M2)**  
+   - 60-second throughput chart (events/sec, in-memory)  
+   - Top 10 routing keys over last 5 minutes
+
+4. **Explorer (M3)**  
+   - Search across persisted events (requires DB/Redis)  
+   - Download sample payloads
+
+### Information Architecture
+- **Global header**: env indicator (dev/stage/prod), connection pill, quick filter
+- **Left rail**: filters (routing key, service, env)
+- **Main**: live list + small KPIs; secondary tab for charts
+- **Details drawer**: full JSON payload + AMQP fields/properties
+
+### Event Contract (assumptions for UI)
+- **Routing key**: `domain.action.variant` (e.g., `auth.user.created`)
+- **Payload**: JSON object
+- **Optional headers**: `x-service`, `x-env`, `x-version`
+- **Content-Type**: `application/json`
+> UI will behave gracefully if headers are missing; payload is shown as text if not JSON.
+
+### Real-time Transport Choice
+- **Socket.IO** (selected): reliable reconnects, works behind proxies, rooms for topic-based fan-out, easy Redis adapter later.
+- Alternatives considered: **ws** (leaner, more DIY), **SSE** (read-only push).
+
+### Data Flow (v1 - no persistence)
+Producers → RabbitMQ `events` (topic) → Queue `events.metrics` (binding `#`) → Next.js server consumer → Socket.IO broadcast → Browser updates UI.
+
+### State Model (v1)
+- **In-memory only** in the server and browser
+- Rolling window (latest 200) to avoid unbounded memory
+- Simple counters reset on reload
+
+### Error & Empty States
+- Broker not reachable → red connection pill, retry guidance
+- No messages yet → blank slate with hint: “Publish a test event…”
+- Malformed JSON → show raw string with a “not JSON” indicator
+
+### Security & Access (roadmap)
+- **M3**: Protect Socket.IO path with JWT or basic auth
+- CORS scoped to internal origins
+- No sensitive PII rendered by default (payload masking config later)
+
+### Performance Considerations
+- Client keeps only a small rolling buffer (200)
+- Debounce UI rendering for bursts (batch updates)
+- Avoid heavy formatting on each message (lazy stringify)
+
+### Telemetry & Observability
+- Frontend: simple analytics for FPS drops and message lag
+- Server: log consumer health, ack rate, last message time, error counts
+- Health endpoints: `/api/health`, `/api/socket` liveness
+
+### Testing Strategy
+- **Contract tests** for payload parsing (happy/malformed/large)
+- **Load test** with `playground/` to simulate bursts (1k msgs/min)
+- **UI smoke**: event arrives → list increments → KPI updates
+
+### Deployment Strategy
+- Dev: Next.js dev server
+- Stage/Prod: containerized Next.js (Node runtime) behind reverse proxy that supports WebSockets
+- Future scale: move consumer to separate worker + Redis Pub/Sub + Socket.IO Redis adapter
+
+### Milestones & Acceptance Criteria
+- **M1 – Live Feed**
+  - See starter UI at `/`
+  - Socket connects/disconnects shown
+  - Counter increments and latest 200 render
+- **M2 – Filters & Metrics**
+  - Filter by routing key prefix
+  - 60s throughput chart rendered from in-memory buffer
+- **M3 – Productionization**
+  - Auth on socket path
+  - Persistence (Redis/Postgres) backing charts beyond 60s
+  - Health checks, graceful shutdown
+
+### Non-Goals (v1)
+- Full-text historical search
+- Complex role-based access control
+- Cross-tenant multi-project isolation
+
+---
 ## Glossary (quick)
 
 * **Vhost:** a namespace/isolation boundary in RabbitMQ; exchanges/queues live inside it.
