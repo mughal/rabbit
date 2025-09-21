@@ -1,0 +1,32 @@
+{
+  "name": "@your-scope/publisher",
+  "version": "0.1.0",
+  "description": "Node.js RabbitMQ publisher library",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "mkdir -p dist && cp -R src/* dist/",
+    "test": "echo \"(no tests yet)\" && exit 0",
+    "lint": "echo \"(no linter yet)\" && exit 0"
+  },
+  "keywords": [
+    "rabbitmq",
+    "amqp",
+    "publisher",
+    "events"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.9"
+  }
+}
