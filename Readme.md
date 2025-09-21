@@ -297,6 +297,31 @@ This section describes how to design a small **Node.js publisher library** that 
 
 ---
 
+## Magic of Publishing
+
+We created a small **publisher library** (`libs/publisher`) that apps can use to send events to RabbitMQ. There’s also a **playground** to quickly try it.
+
+### What’s included
+- **Library:** `createPublisher({ amqpUrl, exchange, appId })` → `{ publish(), health(), close() }`
+- **Playground:** two scripts under `playground/`
+  - `test.mjs` — prints publisher health
+  - `publish.mjs` — sends one sample event
+
+### How to run (local)
+Use the RabbitMQ reachable from your Mac (e.g., `localhost:5672`).
+
+```bash
+# 1) Build the library once
+cd libs/publisher && npm run build
+
+# 2) Check connection status (should become "connected")
+cd ../../playground
+node test.mjs
+
+# 3) Publish a sample event
+node publish.mjs
+
+---
 ### Rollout Checklist
 - [ ] vhost/user/permissions in RabbitMQ
 - [ ] topic exchange declared (`events`, durable)
