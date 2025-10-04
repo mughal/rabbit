@@ -1,31 +1,51 @@
+// socket.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { Server as IOServer } from "socket.io";
 import type { Server as HTTPServer } from "http";
-import { startConsumer } from "@/lib/rabbit"; // ⬅️ add this
+import { Server as IOServer } from "socket.io";
+import { startConsumer } from "@/lib/rabbit";
 
-type ResWithServer = NextApiResponse & { socket: any & { server: HTTPServer & { io?: IOServer } } };
+type ResWithIO = NextApiResponse & {
+  socket: any & { server: HTTPServer & { io?: IOServer } };
+};
 
 let booting = false;
 
-export default async function handler(req: NextApiRequest, res: ResWithServer) {
+export default async function handler(_req: NextApiRequest, res: ResWithIO) {
   const httpServer = res.socket.server;
 
   if (!httpServer.io && !booting) {
     booting = true;
 
-    const io = new IOServer(httpServer, { path: "/api/socket", cors: { origin: "*" } });
-    httpServer.io = io;
+    console.log(`[socket] Initializing Socket.IO at ${new Date().toISOString()}`);
+
+    const io = new IOServer(httpServer, {
+      path: "/api/socket",
+      serveClient: false,
+      cors: { origin: "*" },
+    });
+
+    (httpServer as any).io = io;
 
     io.on("connection", (socket) => {
-      console.log("[socket.io] connected", socket.id);
-      socket.emit("hello", { msg: "socket up" });
+      console.log(`[socket] client connected: ${socket.id}`);
+      socket.emit("hello", { ok: true, ts: new Date().toISOString() });
+      socket.on("disconnect", (reason) =>
+        console.log(`[socket] client disconnected: ${socket.id} (${reason})`)
+      );
     });
 
-    // ⬇️ start RabbitMQ consumer and broadcast to all sockets
     await startConsumer(({ routingKey, payload, fields, properties }) => {
-      io.emit("event", { routingKey, payload, fields, properties });
+      const preview =
+        typeof payload === "string" ? payload : JSON.stringify(payload).slice(0, 200);
+      console.log(
+        `[socket] emit -> event rk=${routingKey} mid=${properties?.messageId ?? "-"} ts=${
+          properties?.timestamp ?? "-"
+        } payload=${preview}`
+      );
+      io.emit("event", { routingKey, payload, fields, properties, ts: new Date().toISOString() });
     });
 
+    console.log("[socket] Socket.IO ready and Rabbit consumer attached");
     booting = false;
   }
 
